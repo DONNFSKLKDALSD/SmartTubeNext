@@ -70,17 +70,7 @@ public final class SabrExtractorInput implements ExtractorInput {
 
     @Override
     public void readFully(byte[] buffer, int offset, int length) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        readFullyInt(buffer, offset, length);
-        if (remaining != C.LENGTH_UNSET) {
-            remaining -= length;
-        }
-        if (exceeded) {
-            throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-        }
+        readFully(buffer, offset, length, false);
     }
 
     @Override
@@ -101,7 +91,7 @@ public final class SabrExtractorInput implements ExtractorInput {
             if (allowEndOfInput) {
                 ok = false;
             } else {
-                throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
+                throwChunkBoundaryExceeded();
             }
         }
         return ok;
@@ -121,32 +111,7 @@ public final class SabrExtractorInput implements ExtractorInput {
 
     @Override
     public void skipFully(int length) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        skipFullyInt(length);
-        if (remaining != C.LENGTH_UNSET) {
-            remaining -= length;
-        }
-        if (exceeded) {
-            throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-        }
-    }
-
-    @Override
-    public long getPosition() {
-        return getPositionInt();
-    }
-
-    @Override
-    public long getLength() {
-        return remaining;
-    }
-
-    @Override
-    public <E extends Throwable> void setRetryPosition(long p, E e) throws E {
-        setRetryPositionInt(p, e);
+        skipFully(length, false);
     }
 
     @Override
@@ -165,10 +130,25 @@ public final class SabrExtractorInput implements ExtractorInput {
             if (allowEndOfInput) {
                 ok = false;
             } else {
-                throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
+                throwChunkBoundaryExceeded();
             }
         }
         return ok;
+    }
+
+    @Override
+    public long getPosition() {
+        return getPositionInt();
+    }
+
+    @Override
+    public long getLength() {
+        return remaining;
+    }
+
+    @Override
+    public <E extends Throwable> void setRetryPosition(long p, E e) throws E {
+        throwShouldNotBeCalled();
     }
 
     @Override
@@ -176,71 +156,41 @@ public final class SabrExtractorInput implements ExtractorInput {
             byte[] target,
             int offset,
             int length,
-            boolean allowEndOfInput) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        boolean ok = peekFullyInt(target, offset, length, allowEndOfInput);
-        if (exceeded) {
-            if (allowEndOfInput) {
-                ok = false;
-            } else {
-                throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-            }
-        }
-        return ok;
+            boolean allowEndOfInput) {
+        throwShouldNotBeCalled();
+        return false;
     }
 
     @Override
     public void peekFully(
             byte[] target,
             int offset,
-            int length) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        peekFullyInt(target, offset, length);
-        if (exceeded) {
-            throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-        }
+            int length) {
+        throwShouldNotBeCalled();
     }
 
     @Override
     public boolean advancePeekPosition(
             int length,
-            boolean allowEndOfInput) throws IOException, InterruptedException {
-
-        if (length > remaining) {
-            if (allowEndOfInput) {
-                return false;
-            }
-            throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-        }
-
-        return advancePeekPositionInt(length, allowEndOfInput);
+            boolean allowEndOfInput) {
+        throwShouldNotBeCalled();
+        return false;
     }
 
     @Override
-    public void advancePeekPosition(int length)
-            throws IOException, InterruptedException {
-
-        if (length > remaining) {
-            throw new EOFException("LimitedExtractorInput: chunk boundary exceeded");
-        }
-
-        advancePeekPositionInt(length);
+    public void advancePeekPosition(int length) {
+        throwShouldNotBeCalled();
     }
 
     @Override
     public void resetPeekPosition() {
-        resetPeekPositionInt();
+        throwShouldNotBeCalled();
     }
 
     @Override
     public long getPeekPosition() {
-        return getPeekPositionInt();
+        throwShouldNotBeCalled();
+        return -1;
     }
 
     private void fetchData() {
@@ -253,7 +203,7 @@ public final class SabrExtractorInput implements ExtractorInput {
                 } else if (advance == length) {
                     data = null;
                 } else {
-                    throw new IllegalStateException("Reading past the SABR part boundaries");
+                    throwChunkBoundaryExceeded();
                 }
             }
 
@@ -298,34 +248,6 @@ public final class SabrExtractorInput implements ExtractorInput {
         return read;
     }
 
-    private void readFullyInt(byte[] buffer, int offset, int length) throws IOException, InterruptedException {
-        int total = 0;
-
-        while (true) {
-            fetchData();
-
-            if (data == null) {
-                if (total > 0) {
-                    throwEOFException();
-                }
-                break;
-            }
-
-            int toRead = Math.min(getRemaining(), length - total);
-            data.data.readFully(buffer, offset + total, toRead);
-
-            position += toRead;
-
-            if (toRead == length - total) {
-                break;
-            }
-
-            total += toRead;
-
-            Log.e(TAG, "Continue readFully: offset=%s, length=%s", offset + total, length - total);
-        }
-    }
-
     private boolean readFullyInt(byte[] buffer, int offset, int length, boolean allowEndOfInput) throws IOException, InterruptedException {
         boolean result = false;
         int total = 0;
@@ -342,7 +264,7 @@ public final class SabrExtractorInput implements ExtractorInput {
             }
 
             int toRead = Math.min(getRemaining(), length - total);
-            result = data.data.readFully(buffer, offset + total, toRead, allowEndOfInput);
+            result = data.data.readFully(buffer, offset + total, toRead, true);
 
             if (!result) {
                 throwEOFException();
@@ -381,34 +303,6 @@ public final class SabrExtractorInput implements ExtractorInput {
         return skip;
     }
 
-    private void skipFullyInt(int length) throws IOException, InterruptedException {
-        int total = 0;
-
-        while (true) {
-            fetchData();
-
-            if (data == null) {
-                if (total > 0) {
-                    throwEOFException();
-                }
-                break;
-            }
-
-            int toSkip = Math.min(getRemaining(), length - total);
-            data.data.skipFully(toSkip);
-
-            position += toSkip;
-
-            if (toSkip == length - total) {
-                break;
-            }
-
-            total += toSkip;
-
-            Log.e(TAG, "Continue skipFully: length=%s", length - total);
-        }
-    }
-
     private boolean skipFullyInt(int length, boolean allowEndOfInput) throws IOException, InterruptedException {
         boolean result = false;
         int total = 0;
@@ -424,7 +318,7 @@ public final class SabrExtractorInput implements ExtractorInput {
             }
 
             int toSkip = Math.min(getRemaining(), length - total);
-            result = data.data.skipFully(toSkip, allowEndOfInput);
+            result = data.data.skipFully(toSkip, true);
 
             if (!result) {
                 throwEOFException();
@@ -438,7 +332,7 @@ public final class SabrExtractorInput implements ExtractorInput {
 
             total += toSkip;
 
-            Log.e(TAG, "Continue skipFully: length=%s, allowEndOfInput=%s", length - total, allowEndOfInput);
+            Log.e(TAG, "Continue skipFully: length=%s", length - total);
         }
 
         return result;
@@ -457,36 +351,20 @@ public final class SabrExtractorInput implements ExtractorInput {
     }
 
     private static void throwEOFException() throws EOFException {
-        throw new EOFException("EOF should never happened when reading SABR part");
+        String msg = "EOF should never happened when reading SABR part";
+        Log.e(TAG, msg);
+        throw new EOFException(msg);
     }
 
-    // NOTE: The below methods not used!
-
-    private boolean peekFullyInt(byte[] target, int offset, int length, boolean allowEndOfInput) throws IOException, InterruptedException {
-        throw new UnsupportedOperationException("This method shouldn't be called");
+    private static void throwShouldNotBeCalled() {
+        String msg = "The peek methods shouldn't be called in SABR extractor";
+        Log.e(TAG, msg);
+        throw new UnsupportedOperationException(msg);
     }
 
-    private void peekFullyInt(byte[] target, int offset, int length) throws IOException, InterruptedException {
-        throw new UnsupportedOperationException("This method shouldn't be called");
-    }
-
-    private boolean advancePeekPositionInt(int length, boolean allowEndOfInput) throws IOException, InterruptedException {
-        throw new UnsupportedOperationException("This method shouldn't be called");
-    }
-
-    private void advancePeekPositionInt(int length) throws IOException, InterruptedException {
-        throw new UnsupportedOperationException("This method shouldn't be called");
-    }
-
-    private void resetPeekPositionInt() {
-        throw new UnsupportedOperationException("This method shouldn't be called");
-    }
-
-    private long getPeekPositionInt() {
-        throw new UnsupportedOperationException("This method shouldn't be called");
-    }
-
-    private <E extends Throwable> void setRetryPositionInt(long p, E e) throws E {
-        throw new UnsupportedOperationException("This method shouldn't be called");
+    private static void throwChunkBoundaryExceeded() {
+        String msg = "SABR chunk boundary exceeded";
+        Log.e(TAG, msg);
+        throw new IllegalStateException(msg);
     }
 }

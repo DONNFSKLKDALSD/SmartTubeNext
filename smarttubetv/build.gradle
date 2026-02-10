@@ -130,6 +130,7 @@ android {
         stfdroid {
             // matchingFallbacks = ['lite']
             applicationIdSuffix ".fdroid"
+            targetSdkVersion project.properties.compileSdkVersion
         }
     }
 
