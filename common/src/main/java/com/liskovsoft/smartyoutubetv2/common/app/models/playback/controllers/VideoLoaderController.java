@@ -131,14 +131,18 @@ public class VideoLoaderController extends BasePlayerController {
         } else if ((!getVideo().isLive || getVideo().isLiveEnd)
                 && getPlayer().getDurationMs() - getPlayer().getPositionMs() < STREAM_END_THRESHOLD_MS) {
             getMainController().onPlayEnd();
-        } else if (!getVideo().isLive && !getVideo().isLiveEnd && !getPlayerTweaksData().isNetworkErrorFixingDisabled()) {
-            MessageHelpers.showLongMessage(getContext(), R.string.playback_buffering_fix);
-            //YouTubeServiceManager.instance().invalidateCache();
+        } else if (!getVideo().isLive && !getVideo().isLiveEnd) {
             YouTubeServiceManager.instance().applyNoPlaybackFix();
-            // Faster source is different among devices. Try them one by one.
-            switchNextEngine();
-            restartEngine();
+            reloadVideo();
         }
+        //} else if (!getVideo().isLive && !getVideo().isLiveEnd && !getPlayerTweaksData().isNetworkErrorFixingDisabled()) {
+        //    MessageHelpers.showLongMessage(getContext(), R.string.playback_buffering_fix);
+        //    //YouTubeServiceManager.instance().invalidateCache();
+        //    YouTubeServiceManager.instance().applyNoPlaybackFix();
+        //    // Faster source is different among devices. Try them one by one.
+        //    switchNextEngine();
+        //    restartEngine();
+        //}
     }
 
     @Override
@@ -546,8 +550,8 @@ public class VideoLoaderController extends BasePlayerController {
         if (Helpers.startsWithAny(errorContent, "Unable to connect to")) {
             // No internet connection or WRONG DATE on the device
             // Recently this message starting to show for other reasons
-            //YouTubeServiceManager.instance().applyNoPlaybackFix(); // ?
-            switchNextEngine(); // ?
+            YouTubeServiceManager.instance().applyNoPlaybackFix(); // ?
+            //switchNextEngine(); // ?
             //restartEngine = false;
         } else if (error instanceof OutOfMemoryError || (error != null && error.getCause() instanceof OutOfMemoryError)) {
             if (getPlayerTweaksData().getPlayerDataSource() == PlayerTweaksData.PLAYER_DATA_SOURCE_OKHTTP) {
