@@ -2,7 +2,7 @@ package com.google.android.exoplayer2.source.sabr.parser.misc;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
-import com.google.android.exoplayer2.source.sabr.parser.core.SabrStream;
+import com.google.android.exoplayer2.source.sabr.parser.SabrStream;
 import com.google.android.exoplayer2.source.sabr.parser.parts.MediaSegmentDataSabrPart;
 import com.google.android.exoplayer2.source.sabr.parser.parts.SabrPart;
 import com.liskovsoft.sharedutils.mylogger.Log;
@@ -12,6 +12,7 @@ import java.io.IOException;
 
 public final class SabrExtractorInput implements ExtractorInput {
     private static final String TAG = SabrExtractorInput.class.getSimpleName();
+    private static final boolean ALLOW_END_OF_INPUT = true;
     private final SabrStream sabrStream;
     private ExtractorInput input;
     private long position;
@@ -55,17 +56,7 @@ public final class SabrExtractorInput implements ExtractorInput {
 
     @Override
     public int read(byte[] buffer, int offset, int length) throws IOException, InterruptedException {
-        if (remaining == 0) {
-            return C.RESULT_END_OF_INPUT;
-        }
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        int read = readInt(buffer, offset, length);
-        if (remaining != C.LENGTH_UNSET && read > 0) {
-            remaining -= read;
-        }
-        return read;
+        return forward(length, newLength -> data.data.read(buffer, offset, newLength));
     }
 
     @Override
@@ -79,34 +70,14 @@ public final class SabrExtractorInput implements ExtractorInput {
             int offset,
             int length,
             boolean allowEndOfInput) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        boolean ok = readFullyInt(buffer, offset, length, allowEndOfInput);
-        if (remaining != C.LENGTH_UNSET) {
-            remaining -= length;
-        }
-        if (exceeded) {
-            if (allowEndOfInput) {
-                ok = false;
-            } else {
-                throwChunkBoundaryExceeded();
-            }
-        }
-        return ok;
+        return forwardFully(length,
+                (total, newLength) -> data.data.readFully(buffer, offset + total, newLength, ALLOW_END_OF_INPUT)
+        );
     }
 
     @Override
     public int skip(int length) throws IOException, InterruptedException {
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        int skipped = skipInt(length);
-        if (remaining != C.LENGTH_UNSET && skipped > 0) {
-            remaining -= skipped;
-        }
-        return skipped;
+        return forward(length, newLength -> data.data.skip(newLength));
     }
 
     @Override
@@ -118,22 +89,8 @@ public final class SabrExtractorInput implements ExtractorInput {
     public boolean skipFully(
             int length,
             boolean allowEndOfInput) throws IOException, InterruptedException {
-        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
-        if (remaining != C.LENGTH_UNSET) {
-            length = Math.min(length, remaining);
-        }
-        boolean ok = skipFullyInt(length, allowEndOfInput);
-        if (remaining != C.LENGTH_UNSET) {
-            remaining -= length;
-        }
-        if (exceeded) {
-            if (allowEndOfInput) {
-                ok = false;
-            } else {
-                throwChunkBoundaryExceeded();
-            }
-        }
-        return ok;
+        return forwardFully(length,
+                (total, newLength) -> data.data.skipFully(newLength, ALLOW_END_OF_INPUT));
     }
 
     @Override
@@ -229,81 +186,72 @@ public final class SabrExtractorInput implements ExtractorInput {
         }
     }
 
-    private int readInt(byte[] buffer, int offset, int length) throws IOException, InterruptedException {
-        int read = C.RESULT_END_OF_INPUT;
-
-        fetchData();
-
-        if (data == null) {
-            return read;
-        }
-
-        int toRead = Math.min(getRemaining(), length);
-        read = data.data.read(buffer, offset, toRead);
-
-        if (read > 0) {
-            position += read;
-        }
-
-        return read;
+    private interface ForwardCallback {
+        int forward(int newLength) throws IOException, InterruptedException;
     }
 
-    private boolean readFullyInt(byte[] buffer, int offset, int length, boolean allowEndOfInput) throws IOException, InterruptedException {
-        boolean result = false;
-        int total = 0;
+    private int forward(int length, ForwardCallback callback) throws IOException, InterruptedException {
+        if (remaining == 0) {
+            return C.RESULT_END_OF_INPUT;
+        }
 
-        while (true) {
-            fetchData();
+        if (remaining != C.LENGTH_UNSET) {
+            length = Math.min(length, remaining);
+        }
 
-            if (data == null) {
-                if (total > 0) {
-                    throwEOFException();
-                }
+        int result = forwardReal(length, callback);
 
-                break;
-            }
-
-            int toRead = Math.min(getRemaining(), length - total);
-            result = data.data.readFully(buffer, offset + total, toRead, true);
-
-            if (!result) {
-                throwEOFException();
-            }
-
-            position += toRead;
-
-            if (toRead == length - total) {
-                break;
-            }
-
-            total += toRead;
-
-            Log.e(TAG, "Continue readFully: offset=%s, length=%s", offset + total, length - total);
+        if (remaining != C.LENGTH_UNSET && result > 0) {
+            remaining -= result;
         }
 
         return result;
     }
 
-    private int skipInt(int length) throws IOException, InterruptedException {
-        int skip = C.RESULT_END_OF_INPUT;
+    private int forwardReal(int length, ForwardCallback callback) throws IOException, InterruptedException {
+        int result = C.RESULT_END_OF_INPUT;
 
         fetchData();
 
         if (data == null) {
-            return skip;
+            return result;
         }
 
-        int toRead = Math.min(getRemaining(), length);
-        skip = data.data.skip(toRead);
+        int newLength = Math.min(getRemaining(), length);
+        result = callback.forward(newLength);
 
-        if (skip > 0) {
-            position += skip;
+        if (result > 0) {
+            position += result;
         }
 
-        return skip;
+        return result;
     }
 
-    private boolean skipFullyInt(int length, boolean allowEndOfInput) throws IOException, InterruptedException {
+    private interface ForwardFullyCallback {
+        boolean forwardFully(int total, int newLength) throws IOException, InterruptedException;
+    }
+
+    private boolean forwardFully(int length, ForwardFullyCallback callback) throws IOException, InterruptedException {
+        boolean exceeded = remaining != C.LENGTH_UNSET && length > remaining;
+
+        if (exceeded) {
+            throwChunkBoundaryExceeded();
+        }
+
+        if (remaining != C.LENGTH_UNSET) {
+            length = Math.min(length, remaining);
+        }
+
+        boolean result = forwardFullyReal(length, callback);
+
+        if (remaining != C.LENGTH_UNSET) {
+            remaining -= length;
+        }
+
+        return result;
+    }
+
+    private boolean forwardFullyReal(int length, ForwardFullyCallback callback) throws IOException, InterruptedException {
         boolean result = false;
         int total = 0;
 
@@ -314,25 +262,26 @@ public final class SabrExtractorInput implements ExtractorInput {
                 if (total > 0) {
                     throwEOFException();
                 }
+
                 break;
             }
 
-            int toSkip = Math.min(getRemaining(), length - total);
-            result = data.data.skipFully(toSkip, true);
+            int newLength = Math.min(getRemaining(), length - total);
+            result = callback.forwardFully(total, newLength);
 
             if (!result) {
                 throwEOFException();
             }
 
-            position += toSkip;
+            position += newLength;
 
-            if (toSkip == length - total) {
+            if (newLength == length - total) {
                 break;
             }
 
-            total += toSkip;
+            total += newLength;
 
-            Log.e(TAG, "Continue skipFully: length=%s", length - total);
+            Log.e(TAG, "Continue forwardFully: total=%s, length=%s", total, length - total);
         }
 
         return result;

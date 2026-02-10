@@ -1,22 +1,16 @@
 package com.google.android.exoplayer2.source.sabr.parser;
 
 import android.util.Base64;
-import android.util.Pair;
 
 import androidx.annotation.NonNull;
 
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.source.sabr.parser.exceptions.SabrStreamError;
-import com.google.android.exoplayer2.source.sabr.parser.misc.EnabledTrackTypes;
-import com.google.android.exoplayer2.source.sabr.parser.models.AudioSelector;
-import com.google.android.exoplayer2.source.sabr.parser.models.CaptionSelector;
+import com.google.android.exoplayer2.source.sabr.parser.misc.Utils;
 import com.google.android.exoplayer2.source.sabr.parser.models.ConsumedRange;
 import com.google.android.exoplayer2.source.sabr.parser.models.FormatSelector;
-import com.google.android.exoplayer2.source.sabr.parser.models.SelectedFormat;
 import com.google.android.exoplayer2.source.sabr.parser.models.Segment;
-import com.google.android.exoplayer2.source.sabr.parser.models.VideoSelector;
+import com.google.android.exoplayer2.source.sabr.parser.models.SelectedFormat;
 import com.google.android.exoplayer2.source.sabr.parser.parts.FormatInitializedSabrPart;
 import com.google.android.exoplayer2.source.sabr.parser.parts.MediaSeekSabrPart;
 import com.google.android.exoplayer2.source.sabr.parser.parts.MediaSegmentDataSabrPart;
@@ -31,24 +25,19 @@ import com.google.android.exoplayer2.source.sabr.parser.results.ProcessMediaHead
 import com.google.android.exoplayer2.source.sabr.parser.results.ProcessMediaResult;
 import com.google.android.exoplayer2.source.sabr.parser.results.ProcessSabrSeekResult;
 import com.google.android.exoplayer2.source.sabr.parser.results.ProcessStreamProtectionStatusResult;
-import com.google.android.exoplayer2.source.sabr.parser.misc.Utils;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.BufferedRange;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.ClientAbrState;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.ClientInfo;
-import com.google.android.exoplayer2.source.sabr.protos.misc.FormatId;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.FormatInitializationMetadata;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.LiveMetadata;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.MediaHeader;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.NextRequestPolicy;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.SabrContext;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextSendingPolicy;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextUpdate;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrSeek;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamProtectionStatus;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamProtectionStatus.Status;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.ClientInfo;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.SabrContext;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.TimeRange;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.VideoPlaybackAbrRequest;
 import com.google.protobuf.ByteString;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
@@ -66,19 +55,15 @@ public class SabrProcessor {
     private static final int NO_VALUE = -1;
     private final String videoPlaybackUstreamerConfig;
     private final ClientInfo clientInfo;
-    private VideoSelector videoFormatSelector;
-    private AudioSelector audioFormatSelector;
-    private CaptionSelector captionFormatSelector;
+    private FormatSelector formatSelector;
     private final int liveSegmentTargetDurationToleranceMs;
     private final int liveSegmentTargetDurationSec;
-    private final long startTimeMs;
+    private long playerTimeMs;
     private final String poToken;
     private final boolean postLive;
     private final String videoId;
     private final long durationMs;
-    private ClientAbrState clientAbrState;
     private final Map<Long, Segment> partialSegments;
-    private final Map<FormatId, Segment> recentSegments;
     private final Map<String, SelectedFormat> selectedFormats;
     private Status streamProtectionStatus;
     private boolean isLive;
@@ -88,16 +73,14 @@ public class SabrProcessor {
     private final Map<Integer, SabrContextUpdate> sabrContextUpdates;
     private final Set<Integer> sabrContextsToSend;
     private final Map<Integer, MediaHeader> initializedFormats;
+    private final FormatSelector emptySelector;
 
     public SabrProcessor(
             @NonNull String videoPlaybackUstreamerConfig,
             @NonNull ClientInfo clientInfo,
-            //AudioSelector audioSelection,
-            //VideoSelector videoSelection,
-            //CaptionSelector captionSelection,
             int liveSegmentTargetDurationSec,
             int liveSegmentTargetDurationToleranceMs,
-            long startTimeMs,
+            long playerTimeMs,
             String poToken,
             boolean postLive,
             String videoId,
@@ -111,8 +94,8 @@ public class SabrProcessor {
         if (this.liveSegmentTargetDurationToleranceMs >= (this.liveSegmentTargetDurationSec * 1_000) / 2) {
             throw new IllegalArgumentException("liveSegmentTargetDurationToleranceMs must be less than half of liveSegmentTargetDurationSec in milliseconds");
         }
-        this.startTimeMs = startTimeMs != NO_VALUE ? startTimeMs : 0;
-        if (this.startTimeMs < 0) {
+        this.playerTimeMs = playerTimeMs != NO_VALUE ? playerTimeMs : 0;
+        if (this.playerTimeMs < 0) {
             throw new IllegalArgumentException("start_time_ms must be greater than or equal to 0");
         }
 
@@ -129,45 +112,45 @@ public class SabrProcessor {
         selectedFormats = new HashMap<>();
 
         partialSegments = new HashMap<>();
-        recentSegments = new HashMap<>();
         totalDurationMs = NO_VALUE;
         sabrContextsToSend = new HashSet<>();
         sabrContextUpdates = new HashMap<>();
         initializedFormats = new HashMap<>();
-        initializeClientAbrState();
+        emptySelector = new FormatSelector("ignore", true);
+        initializeFormatSelector();
     }
 
-    private void initializeClientAbrState() {
-        if (videoFormatSelector == null) {
-            videoFormatSelector = new VideoSelector("video_ignore", true);
+    public long getPlayerTimeMs() {
+        return playerTimeMs;
+    }
+
+    public void setPlayerTimeMs(long playerTimeMs) {
+        this.playerTimeMs = playerTimeMs;
+    }
+
+    private void initializeFormatSelector() {
+        if (formatSelector == null) {
+            formatSelector = emptySelector;
         }
 
-        if (audioFormatSelector == null) {
-            audioFormatSelector = new AudioSelector("audio_ignore", true);
-        }
+        //int enabledTrackTypesBitfield = 0;  // Audio+Video
 
-        if (captionFormatSelector == null) {
-            captionFormatSelector = new CaptionSelector("caption_ignore", true);
-        }
-
-        int enabledTrackTypesBitfield = 0;  // Audio+Video
-
-        if (videoFormatSelector.discardMedia) {
-            enabledTrackTypesBitfield = 1; // Audio only
-        }
-
-        if (!captionFormatSelector.discardMedia) {
-            // SABR does not support caption-only or audio+captions only - can only get audio+video with captions
-            // If audio or video is not selected, the tracks will be initialized but marked as buffered.
-            enabledTrackTypesBitfield = 7;
-        }
-
-        Log.d(TAG, "Starting playback at: %sms", startTimeMs);
-        clientAbrState = ClientAbrState.newBuilder()
-                .setPlayerTimeMs(startTimeMs)
-                .setEnabledTrackTypesBitfield(enabledTrackTypesBitfield)
-                .setDrcEnabled(false) // Required to stream DRC formats
-                .build();
+        //if (videoFormatSelector.discardMedia) {
+        //    enabledTrackTypesBitfield = 1; // Audio only
+        //}
+        //
+        //if (!captionFormatSelector.discardMedia) {
+        //    // SABR does not support caption-only or audio+captions only - can only get audio+video with captions
+        //    // If audio or video is not selected, the tracks will be initialized but marked as buffered.
+        //    enabledTrackTypesBitfield = 7;
+        //}
+        //
+        //Log.d(TAG, "Starting playback at: %sms", playerTimeMs);
+        //clientAbrState = ClientAbrState.newBuilder()
+        //        .setPlayerTimeMs(playerTimeMs)
+        //        .setEnabledTrackTypesBitfield(enabledTrackTypesBitfield)
+        //        .setDrcEnabled(false) // Required to stream DRC formats
+        //        .build();
     }
 
     public ProcessMediaHeaderResult processMediaHeader(MediaHeader mediaHeader) {
@@ -267,7 +250,7 @@ public class SabrProcessor {
             result.sabrPart = new MediaSegmentInitSabrPart(
                     segment.initializedFormat.formatSelector,
                     segment.formatId,
-                    clientAbrState.hasPlayerTimeMs() ? clientAbrState.getPlayerTimeMs() : NO_VALUE,
+                    playerTimeMs > 0 ? playerTimeMs : NO_VALUE,
                     segment.sequenceNumber,
                     segment.initializedFormat.totalSegments,
                     segment.durationMs,
@@ -278,8 +261,6 @@ public class SabrProcessor {
                     segment.contentLength,
                     segment.contentLengthEstimated
             );
-
-            recentSegments.put(segment.formatId, segment);
         }
 
         Log.d(TAG, "Initialized Media Header %s for sequence %s. Segment: %s",
@@ -322,16 +303,15 @@ public class SabrProcessor {
     }
 
     public ProcessMediaEndResult processMediaEnd(long headerId) {
-        // TODO: investigate why remove produces the exception
-        // MOD: don't remove segments
-        //Segment segment = partialSegments.remove(headerId);
-        Segment segment = partialSegments.get(headerId);
+        Segment segment = partialSegments.remove(headerId);
         if (segment == null) {
-            Log.d(TAG, "Header ID %s not found", headerId);
+            Log.e(TAG, "Header ID %s not found", headerId);
             throw new SabrStreamError(String.format("Header ID %s not found in partial segments", headerId));
         }
 
-        initializedFormats.put(segment.mediaHeader.getItag(), segment.mediaHeader);
+        if (!segment.mediaHeader.getIsInitSeg()) {
+            initializedFormats.put(segment.mediaHeader.getItag(), segment.mediaHeader);
+        }
 
         Log.d(TAG, "MediaEnd for %s (sequence %s, data length = %s)",
                 segment.formatId, segment.sequenceNumber, segment.receivedDataLength);
@@ -433,12 +413,12 @@ public class SabrProcessor {
         String poToken = this.poToken;
         PoTokenStatus resultStatus = null;
 
-        if (status == StreamProtectionStatus.Status.OK) {
-            resultStatus = poToken != null ? PoTokenStatusSabrPart.PoTokenStatus.OK : PoTokenStatusSabrPart.PoTokenStatus.NOT_REQUIRED;
-        } else if (status == StreamProtectionStatus.Status.ATTESTATION_PENDING) {
-            resultStatus = poToken != null ? PoTokenStatusSabrPart.PoTokenStatus.PENDING : PoTokenStatusSabrPart.PoTokenStatus.PENDING_MISSING;
-        } else if (status == StreamProtectionStatus.Status.ATTESTATION_REQUIRED) {
-            resultStatus = poToken != null ? PoTokenStatusSabrPart.PoTokenStatus.INVALID : PoTokenStatusSabrPart.PoTokenStatus.MISSING;
+        if (status == Status.OK) {
+            resultStatus = poToken != null ? PoTokenStatus.OK : PoTokenStatus.NOT_REQUIRED;
+        } else if (status == Status.ATTESTATION_PENDING) {
+            resultStatus = poToken != null ? PoTokenStatus.PENDING : PoTokenStatus.PENDING_MISSING;
+        } else if (status == Status.ATTESTATION_REQUIRED) {
+            resultStatus = poToken != null ? PoTokenStatus.INVALID : PoTokenStatus.MISSING;
         } else {
             Log.w(TAG, "Received an unknown StreamProtectionStatus: %s", streamProtectionStatus);
         }
@@ -526,7 +506,7 @@ public class SabrProcessor {
 
         if (formatInitMetadata.hasFormatId()) {
             selectedFormats.put(formatInitMetadata.getFormatId().toString(), initializedFormat);
-            Log.d(TAG, "Initialized Format: %s", initializedFormat);
+            Log.d(TAG, "Initialized Format: %s", initializedFormat.formatId);
         }
 
         if (!initializedFormat.discard) {
@@ -567,10 +547,10 @@ public class SabrProcessor {
         // The server SHOULD NOT send us segments before the min dvr time, so we should assume that the player time is correct.
         long minSeekableTimeMs = Utils.ticksToMs(liveMetadata.hasMinSeekableTimeTicks() ? liveMetadata.getMinSeekableTimeTicks() : -1,
                 liveMetadata.hasMinSeekableTimescale() ? liveMetadata.getMinSeekableTimescale() : -1);
-        if (minSeekableTimeMs != -1 && clientAbrState.hasPlayerTimeMs() && clientAbrState.getPlayerTimeMs() < minSeekableTimeMs) {
+        if (minSeekableTimeMs != -1 && playerTimeMs > 0 && playerTimeMs < minSeekableTimeMs) {
             Log.d(TAG, "Player time %s is less than min seekable time %s, simulating server seek",
-                    clientAbrState.getPlayerTimeMs(), minSeekableTimeMs);
-            clientAbrState = clientAbrState.toBuilder().setPlayerTimeMs(minSeekableTimeMs).build();
+                    playerTimeMs, minSeekableTimeMs);
+            playerTimeMs = minSeekableTimeMs;
             for (SelectedFormat izf : selectedFormats.values()) {
                 izf.currentSegment = null; // Clear the current segment as we expect segments to no longer be in order.
                 result.seekSabrParts.add(
@@ -592,7 +572,7 @@ public class SabrProcessor {
             throw new SabrStreamError(String.format("Server sent a SabrSeek part that is missing required seek data: %s", sabrSeek));
         }
         Log.d(TAG, "Seeking to %sms", seekTo);
-        clientAbrState = clientAbrState.toBuilder().setPlayerTimeMs(seekTo).build();
+        playerTimeMs = seekTo;
 
         ProcessSabrSeekResult result = new ProcessSabrSeekResult();
 
@@ -665,15 +645,6 @@ public class SabrProcessor {
         this.isLive = isLive;
     }
 
-    @NonNull
-    public ClientAbrState getClientAbrState() {
-        return clientAbrState;
-    }
-
-    public void setClientAbrState(@NonNull ClientAbrState state) {
-        clientAbrState = state;
-    }
-
     public int getLiveSegmentTargetDurationToleranceMs() {
         return liveSegmentTargetDurationToleranceMs;
     }
@@ -682,117 +653,37 @@ public class SabrProcessor {
         return liveSegmentTargetDurationSec;
     }
 
-    //public VideoPlaybackAbrRequest createVideoPlaybackAbrRequest() {
-    //    return VideoPlaybackAbrRequest.newBuilder()
-    //            .setClientAbrState(getClientAbrState())
-    //            .addAllPreferredVideoFormatIds(selectedVideoFormatIds)
-    //            .addAllPreferredAudioFormatIds(selectedAudioFormatIds)
-    //            .addAllPreferredSubtitleFormatIds(selectedCaptionFormatIds)
-    //            .addAllSelectedFormatIds(getSelectedFormatIds())
-    //            .setVideoPlaybackUstreamerConfig(
-    //                    ByteString.copyFrom(
-    //                            Base64.decode(videoPlaybackUstreamerConfig, Base64.URL_SAFE)
-    //                    )
-    //            )
-    //            .setStreamerContext(createStreamerContext())
-    //            .addAllBufferedRanges(createBufferedRanges())
-    //            .build();
+    public long getSegmentStartTimeMs(int iTag) {
+        MediaHeader mediaHeader = initializedFormats.get(iTag);
+
+        if (mediaHeader == null || mediaHeader.getStartMs() == -1) {
+            return 0;
+        }
+
+        return mediaHeader.getStartMs() + mediaHeader.getDurationMs();
+    }
+
+    public long getSegmentDurationMs(int iTag) {
+        MediaHeader mediaHeader = initializedFormats.get(iTag);
+
+        if (mediaHeader == null) {
+            return 0;
+        }
+
+        return mediaHeader.getDurationMs();
+    }
+
+    //private List<FormatId> createSelectedFormatIds() {
+    //    List<FormatId> result = new ArrayList<>();
+    //
+    //    for (SelectedFormat selectedFormat : selectedFormats.values()) {
+    //        result.add(selectedFormat.formatId);
+    //    }
+    //
+    //    return result;
     //}
 
-    public VideoPlaybackAbrRequest createVideoPlaybackAbrRequest(int trackType, boolean isInit) {
-        Format selectedVideoFormat = videoFormatSelector.getSelectedFormat();
-        Format selectedAudioFormat = audioFormatSelector.getSelectedFormat();
-        int height = trackType == C.TRACK_TYPE_VIDEO && selectedVideoFormat != null
-                ? selectedVideoFormat.height : -1;
-        int bandwidthEstimate = trackType == C.TRACK_TYPE_VIDEO && selectedVideoFormat != null
-                ? selectedVideoFormat.bitrate : selectedAudioFormat != null ? selectedAudioFormat.bitrate : -1;
-
-        long startTimeMs = isInit ? 0 : getSegmentStartTimeMs(trackType);
-
-        ClientAbrState.Builder clientAbrStateBuilder = getClientAbrState().toBuilder()
-                .setSabrForceMaxNetworkInterruptionDurationMs(0)
-                .setPlaybackRate(1)
-                .setPlayerTimeMs(startTimeMs)
-                .setClientViewportIsFlexible(false)
-                .setBandwidthEstimate(bandwidthEstimate)
-                .setDrcEnabled(false)
-                .setEnabledTrackTypesBitfield(height != -1 ? EnabledTrackTypes.VIDEO_ONLY : EnabledTrackTypes.AUDIO_ONLY);
-
-        if (height != -1) {
-                clientAbrStateBuilder
-                        .setStickyResolution(height)
-                        .setLastManualSelectedResolution(height);
-        }
-
-        ClientAbrState clientAbrState = clientAbrStateBuilder.build();
-
-        Pair<List<BufferedRange>, FormatId> bufferRanges = addBufferingInfoToAbrRequest(trackType);
-
-        List<FormatId> selectedFormats = createSelectedFormatIds(trackType);
-
-        if (isInit) {
-            selectedFormats.clear();
-        }
-
-        if (bufferRanges.second != null) {
-            selectedFormats.add(0, bufferRanges.second);
-        }
-
-        return VideoPlaybackAbrRequest.newBuilder()
-                .setClientAbrState(clientAbrState)
-                .addAllPreferredVideoFormatIds(videoFormatSelector.formatIds)
-                .addAllPreferredAudioFormatIds(audioFormatSelector.formatIds)
-                .addAllPreferredSubtitleFormatIds(captionFormatSelector.formatIds)
-                .addAllSelectedFormatIds(selectedFormats)
-                .addAllBufferedRanges(bufferRanges.first)
-                .setVideoPlaybackUstreamerConfig(
-                        ByteString.copyFrom(
-                                Base64.decode(videoPlaybackUstreamerConfig, Base64.URL_SAFE)
-                        )
-                )
-                .setStreamerContext(createStreamerContext())
-                .build();
-    }
-
-    public long getSegmentStartTimeMs(int trackType) {
-        FormatId selectedFormatId = trackType == C.TRACK_TYPE_VIDEO ? videoFormatSelector.getSelectedFormatId() : audioFormatSelector.getSelectedFormatId();
-
-        Segment segment = recentSegments.get(selectedFormatId);
-        return segment != null ? segment.startMs + segment.durationMs : 0;
-    }
-
-    public long getSegmentDurationMs(int trackType) {
-        FormatId selectedFormatId = trackType == C.TRACK_TYPE_VIDEO ? videoFormatSelector.getSelectedFormatId() : audioFormatSelector.getSelectedFormatId();
-
-        Segment segment = recentSegments.get(selectedFormatId);
-        return segment != null ? segment.durationMs : 0;
-    }
-
-    private List<FormatId> createSelectedFormatIds() {
-        List<FormatId> result = new ArrayList<>();
-
-        for (SelectedFormat selectedFormat : selectedFormats.values()) {
-            result.add(selectedFormat.formatId);
-        }
-
-        return result;
-    }
-
-    private List<FormatId> createSelectedFormatIds(int trackType) {
-        List<FormatId> result = new ArrayList<>();
-
-        if (!videoFormatSelector.formatIds.isEmpty() && trackType == C.TRACK_TYPE_VIDEO) {
-            result.addAll(videoFormatSelector.formatIds);
-        } else if (!audioFormatSelector.formatIds.isEmpty() && trackType == C.TRACK_TYPE_AUDIO) {
-            result.addAll(audioFormatSelector.formatIds);
-        } else if (!captionFormatSelector.formatIds.isEmpty() && trackType == C.TRACK_TYPE_TEXT) {
-            result.addAll(captionFormatSelector.formatIds);
-        }
-
-        return result;
-    }
-
-    private StreamerContext createStreamerContext() {
+    public StreamerContext createStreamerContext() {
         return StreamerContext.newBuilder()
                 .setPoToken(
                         ByteString.copyFrom(
@@ -800,7 +691,8 @@ public class SabrProcessor {
                         )
                 )
                 .setPlaybackCookie(
-                        nextRequestPolicy != null ? nextRequestPolicy.getPlaybackCookie().toByteString() : ByteString.EMPTY
+                        nextRequestPolicy != null ?
+                                nextRequestPolicy.getPlaybackCookie().toByteString() : ByteString.EMPTY
                 )
                 .setClientInfo(clientInfo)
                 .addAllSabrContexts(createSabrContexts())
@@ -837,156 +729,40 @@ public class SabrProcessor {
         return result;
     }
 
-    private List<BufferedRange> createBufferedRanges() {
-        List<BufferedRange> result = new ArrayList<>();
-
-        for (SelectedFormat initializedFormat : selectedFormats.values()) {
-            for (ConsumedRange cr : initializedFormat.consumedRanges) {
-                result.add(
-                        BufferedRange.newBuilder()
-                                .setFormatId(initializedFormat.formatId)
-                                .setStartSegmentIndex(cr.startSequenceNumber)
-                                .setEndSegmentIndex(cr.endSequenceNumber)
-                                .setStartTimeMs(cr.startTimeMs)
-                                .setDurationMs(cr.durationMs)
-                                .setTimeRange(
-                                        TimeRange.newBuilder()
-                                                .setStartTicks(cr.startTimeMs)
-                                                .setDurationTicks(cr.durationMs)
-                                                .setTimescale(1_000)
-                                                .build()
-                                )
-                                .build()
-                );
-            }
+    private FormatSelector matchFormatSelector(FormatInitializationMetadata formatInitMetadata) {
+        if (formatSelector == null) {
+            return null;
         }
 
-        return result;
-    }
-
-    private FormatSelector matchFormatSelector(FormatInitializationMetadata formatInitMetadata) {
-        for (FormatSelector formatSelector : new FormatSelector[]{videoFormatSelector, audioFormatSelector, captionFormatSelector}) {
-            if (formatSelector == null) {
-                continue;
-            }
-
-            if (formatSelector.match(formatInitMetadata.getFormatId(), formatInitMetadata.getMimeType())) {
-                return formatSelector;
-            }
+        if (formatSelector.match(formatInitMetadata.getFormatId(), formatInitMetadata.getMimeType())) {
+            return formatSelector;
         }
 
         return null;
     }
 
-    public void setVideoFormatSelector(VideoSelector videoFormatSelector) {
-        this.videoFormatSelector = videoFormatSelector;
-        initializeClientAbrState();
+    public @NonNull FormatSelector getFormatSelector() {
+        return formatSelector;
     }
 
-    public void setAudioFormatSelector(AudioSelector audioFormatSelector) {
-        this.audioFormatSelector = audioFormatSelector;
-        initializeClientAbrState();
+    public void setFormatSelector(FormatSelector formatSelector) {
+        this.formatSelector = formatSelector;
+        initializeFormatSelector();
     }
 
-    public void setCaptionFormatSelector(CaptionSelector captionFormatSelector) {
-        this.captionFormatSelector = captionFormatSelector;
-        initializeClientAbrState();
+    public @NonNull Map<Integer, MediaHeader> getInitializedFormats() {
+        return initializedFormats;
     }
 
-    /**
-     * Adds buffering information to the ABR request for all active formats.<br/><br/>
-     *
-     * NOTE:
-     * On the web, mobile, and TV clients, buffered ranges in combination to player time is what dictates the segments you get.
-     * In our case, we are cheating a bit by abusing the player time field (in clientAbrState), setting it to the exact start
-     * time value of the segment we want, while YouTube simply uses the actual player time.<br/><br/>
-     *
-     * We don't have to fully replicate this behavior for two reasons:
-     * 1. The SABR server will only send so much segments for a given player time. That means players like Shaka would
-     * not be able to buffer more than what the server thinks is enough. It would behave like YouTube's.
-     * 2. We don't have to know what segment a buffered range starts/ends at. It is easy to do in Shaka, but not in other players.
-     *
-     * @return The format to discard (if any) - typically formats that are active but not currently requested.
-     */
-    private Pair<List<BufferedRange>, FormatId> addBufferingInfoToAbrRequest(int trackType) {
-        FormatId audioFormat = audioFormatSelector.formatIds.isEmpty() ? null : audioFormatSelector.formatIds.get(0);
-        FormatId videoFormat = videoFormatSelector.formatIds.isEmpty() ? null : videoFormatSelector.formatIds.get(0);
+    public void reset(int iTag) {
+        MediaHeader mediaHeader = initializedFormats.get(iTag);
 
-        FormatId formatToDiscard = null;
-        List<BufferedRange> bufferedRanges = new ArrayList<>();
-
-        FormatId currentFormat = trackType == C.TRACK_TYPE_VIDEO ? videoFormat : audioFormat;
-        int currentFormatKey = currentFormat != null ? currentFormat.getItag() : -1;
-
-        for (FormatId activeFormat : new FormatId[]{videoFormat, audioFormat}) {
-            if (activeFormat == null) {
-                continue;
-            }
-
-            int activeFormatKey = activeFormat.getItag();
-            boolean shouldDiscard = currentFormatKey != activeFormatKey;
-            MediaHeader initializedFormat = initializedFormats.get(activeFormatKey);
-
-            BufferedRange bufferedRange = shouldDiscard ? createFullBufferRange(activeFormat) : createPartialBufferRange(initializedFormat);
-
-            if (bufferedRange != null) {
-                bufferedRanges.add(bufferedRange);
-
-                if (shouldDiscard) {
-                    formatToDiscard = activeFormat;
-                }
-            }
+        if (mediaHeader != null) {
+            MediaHeader newHeader = mediaHeader.toBuilder()
+                    .setStartMs(-1)
+                    .setSequenceNumber(0)
+                    .build();
+            initializedFormats.put(iTag, newHeader);
         }
-
-        return new Pair<>(bufferedRanges, formatToDiscard);
-    }
-
-    /**
-     * Creates a bogus buffered range for a format. Used when we want to signal to the server to not send any
-     * segments for this format.
-     * @param format - The format to create a full buffer range for.
-     * @return A BufferedRange object indicating the entire format is buffered.
-     */
-    private BufferedRange createFullBufferRange(@NonNull FormatId format) {
-        return BufferedRange.newBuilder()
-                .setFormatId(format)
-                .setDurationMs(Integer.MAX_VALUE)
-                .setStartTimeMs(0)
-                .setStartSegmentIndex(Integer.MAX_VALUE)
-                .setEndSegmentIndex(Integer.MAX_VALUE)
-                .setTimeRange(TimeRange.newBuilder()
-                        .setDurationTicks(Integer.MAX_VALUE)
-                        .setStartTicks(0)
-                        .setTimescale(1_000)
-                        .build())
-                .build();
-    }
-
-    /**
-     * Creates a buffered range representing a partially buffered format.
-     * @param initializedFormat - The format with initialization data.
-     * @return A BufferedRange object with segment information, or null if no metadata is available.
-     */
-    private BufferedRange createPartialBufferRange(MediaHeader initializedFormat) {
-        if (initializedFormat == null) {
-            return null;
-        }
-
-        int sequenceNumber = initializedFormat.hasSequenceNumber() ? initializedFormat.getSequenceNumber() : 1;
-        TimeRange timeRange = initializedFormat.hasTimeRange() ? initializedFormat.getTimeRange() : null;
-        int timeScale = timeRange != null && timeRange.hasTimescale() ? timeRange.getTimescale() : 1_000;
-        long durationMs = initializedFormat.hasDurationMs() ? initializedFormat.getDurationMs() : 0;
-        return BufferedRange.newBuilder()
-                .setFormatId(initializedFormat.getFormatId())
-                .setStartSegmentIndex(sequenceNumber)
-                .setDurationMs(durationMs)
-                .setStartTimeMs(0)
-                .setEndSegmentIndex(sequenceNumber)
-                .setTimeRange(TimeRange.newBuilder()
-                        .setTimescale(timeScale)
-                        .setStartTicks(0)
-                        .setDurationTicks(durationMs)
-                        .build())
-                .build();
     }
 }

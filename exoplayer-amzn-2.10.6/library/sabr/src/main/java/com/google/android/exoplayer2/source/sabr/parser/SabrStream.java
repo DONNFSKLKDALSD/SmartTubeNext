@@ -5,10 +5,7 @@ import androidx.annotation.NonNull;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.source.sabr.parser.exceptions.MediaSegmentMismatchError;
 import com.google.android.exoplayer2.source.sabr.parser.exceptions.SabrStreamError;
-import com.google.android.exoplayer2.source.sabr.parser.misc.Utils;
-import com.google.android.exoplayer2.source.sabr.parser.models.AudioSelector;
-import com.google.android.exoplayer2.source.sabr.parser.models.CaptionSelector;
-import com.google.android.exoplayer2.source.sabr.parser.models.VideoSelector;
+import com.google.android.exoplayer2.source.sabr.parser.models.FormatSelector;
 import com.google.android.exoplayer2.source.sabr.parser.parts.FormatInitializedSabrPart;
 import com.google.android.exoplayer2.source.sabr.parser.parts.MediaSeekSabrPart;
 import com.google.android.exoplayer2.source.sabr.parser.parts.MediaSegmentDataSabrPart;
@@ -25,20 +22,19 @@ import com.google.android.exoplayer2.source.sabr.parser.results.ProcessStreamPro
 import com.google.android.exoplayer2.source.sabr.parser.ump.UMPDecoder;
 import com.google.android.exoplayer2.source.sabr.parser.ump.UMPPart;
 import com.google.android.exoplayer2.source.sabr.parser.ump.UMPPartId;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.ClientAbrState;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.ClientInfo;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.FormatInitializationMetadata;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.LiveMetadata;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.NextRequestPolicy;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.MediaHeader;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrRedirect;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamProtectionStatus;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrSeek;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrError;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextUpdate;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextSendingPolicy;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.NextRequestPolicy;
 import com.google.android.exoplayer2.source.sabr.protos.videostreaming.ReloadPlayerResponse;
-import com.google.android.exoplayer2.source.sabr.protos.videostreaming.VideoPlaybackAbrRequest;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextSendingPolicy;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrContextUpdate;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrError;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrRedirect;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.SabrSeek;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamProtectionStatus;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext;
+import com.google.android.exoplayer2.source.sabr.protos.videostreaming.StreamerContext.ClientInfo;
 import com.liskovsoft.sharedutils.helpers.Helpers;
 import com.liskovsoft.sharedutils.mylogger.Log;
 import com.liskovsoft.sharedutils.querystringparser.UrlQueryString;
@@ -87,7 +83,6 @@ public class SabrStream {
     private boolean receivedNewSegments;
     private String url;
     private List<? extends  SabrPart> multiResult = null;
-    private int sabrRequestNumber = 0;
 
     private static class NoSegmentsTracker {
         public int consecutiveRequests = 0;
@@ -113,9 +108,6 @@ public class SabrStream {
             @NonNull String serverAbrStreamingUrl,
             @NonNull String videoPlaybackUstreamerConfig,
             @NonNull ClientInfo clientInfo,
-            //AudioSelector audioSelection,
-            //VideoSelector videoSelection,
-            //CaptionSelector captionSelection,
             int liveSegmentTargetDurationSec,
             int liveSegmentTargetDurationToleranceMs,
             long startTimeMs,
@@ -127,9 +119,6 @@ public class SabrStream {
         processor = new SabrProcessor(
                 videoPlaybackUstreamerConfig,
                 clientInfo,
-                //audioSelection,
-                //videoSelection,
-                //captionSelection,
                 liveSegmentTargetDurationSec,
                 liveSegmentTargetDurationToleranceMs,
                 startTimeMs,
@@ -169,48 +158,36 @@ public class SabrStream {
         return result != null ? result : multiResult != null && !multiResult.isEmpty() ? multiResult.remove(0) : null;
     }
 
-    public VideoPlaybackAbrRequest createVideoPlaybackAbrRequest(int trackType, boolean isInit) {
-        return processor.createVideoPlaybackAbrRequest(trackType, isInit);
-    }
-
-    public void setAudioSelection(AudioSelector audioFormatSelector) {
-        if (audioFormatSelector == null) {
-            return;
-        }
-
-        processor.setAudioFormatSelector(audioFormatSelector);
-    }
-
-    public void setVideoSelection(VideoSelector videoFormatSelector) {
-        if (videoFormatSelector == null) {
-            return;
-        }
-
-        processor.setVideoFormatSelector(videoFormatSelector);
-    }
-
-    public void setCaptionSelection(CaptionSelector captionFormatSelector) {
-        if (captionFormatSelector == null) {
-            return;
-        }
-
-        processor.setCaptionFormatSelector(captionFormatSelector);
-    }
-
-    public long getSegmentStartTimeMs(int trackType) {
-        return processor.getSegmentStartTimeMs(trackType);
-    }
-
-    public long getSegmentDurationMs(int trackType) {
-        return processor.getSegmentDurationMs(trackType);
-    }
-
     public void reset() {
         noNewSegmentsTracker.reset();
     }
 
-    public String getRequestUrl() {
-        return Utils.updateQuery(getUrl(), "rn", sabrRequestNumber++);
+    public void reset(int iTag) {
+        processor.reset(iTag);
+    }
+
+    public FormatSelector getFormatSelector() {
+        return processor.getFormatSelector();
+    }
+
+    public void setFormatSelector(FormatSelector formatSelector) {
+        processor.setFormatSelector(formatSelector);
+    }
+
+    public long getSegmentStartTimeMs(int iTag) {
+        return processor.getSegmentStartTimeMs(iTag);
+    }
+
+    public long getSegmentDurationMs(int iTag) {
+        return processor.getSegmentDurationMs(iTag);
+    }
+
+    public MediaHeader getInitializedFormat(int iTag) {
+        return processor.getInitializedFormats().get(iTag);
+    }
+
+    public StreamerContext createStreamerContext() {
+        return processor.createStreamerContext();
     }
 
     private SabrPart parsePart(UMPPart part) {
@@ -284,20 +261,14 @@ public class SabrStream {
             // In such cases, retry with an adjusted player time to resync.
             if (processor.isLive() && e.receivedSequenceNumber == e.expectedSequenceNumber - 1) {
                 // The segment before the previous segment was possibly longer than expected.
-                // Move the player time forward to try to adjust for this.
-                ClientAbrState state = processor.getClientAbrState().toBuilder()
-                        .setPlayerTimeMs(processor.getClientAbrState().getPlayerTimeMs() + processor.getLiveSegmentTargetDurationToleranceMs())
-                        .build();
-                processor.setClientAbrState(state);
+                // Move the player time forward to try to adjust for this.;
+                processor.setPlayerTimeMs(processor.getPlayerTimeMs() + processor.getLiveSegmentTargetDurationToleranceMs());
                 sqMismatchForwardCount += 1;
                 return null;
             } else if (processor.isLive() && e.receivedSequenceNumber == e.expectedSequenceNumber + 2) {
                 // The previous segment was possibly shorter than expected
                 // Move the player time backwards to try to adjust for this.
-                ClientAbrState state = processor.getClientAbrState().toBuilder()
-                        .setPlayerTimeMs(Math.max(0, processor.getClientAbrState().getPlayerTimeMs() - processor.getLiveSegmentTargetDurationToleranceMs()))
-                        .build();
-                processor.setClientAbrState(state);
+                processor.setPlayerTimeMs(Math.max(0, processor.getPlayerTimeMs() - processor.getLiveSegmentTargetDurationToleranceMs()));
                 sqMismatchBacktrackCount += 1;
                 return null;
             }
@@ -504,10 +475,15 @@ public class SabrStream {
 
             // Normal reading: 47, 58. 52, 53, 42, 35, 20, 21, 22, 20...
             if (contains(KNOWN_PARTS, part.partId)) {
-                Log.d(TAG, "Found known part. id: %s, size: %s, position: %s", part.partId, part.size, part.data.getPosition());
+                Log.d(TAG, "Found known part: id=%s, size=%s, position=%s", part.partId, part.size, part.data.getPosition());
                 break;
             } else {
-                Log.e(TAG, "Unknown part encountered. id: %s, size: %s, position: %s", part.partId, part.size, part.data.getPosition());
+                String msg = String.format("Unknown part encountered: id=%s, size=%s, position=%s", part.partId, part.size, part.data.getPosition());
+                if (part.partId > 100) {
+                    throw new IllegalStateException(msg);
+                }
+
+                Log.e(TAG, msg);
                 part.skip(); // an essential part to continue reading
             }
 
@@ -519,7 +495,7 @@ public class SabrStream {
         return part;
     }
 
-    private String getUrl() {
+    public String getUrl() {
         return this.url;
     }
 

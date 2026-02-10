@@ -10,7 +10,7 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.offline.FilterableManifest;
 import com.google.android.exoplayer2.offline.StreamKey;
-import com.google.android.exoplayer2.source.sabr.parser.core.SabrStream;
+import com.google.android.exoplayer2.source.sabr.parser.SabrStream;
 import com.google.android.exoplayer2.source.sabr.parser.misc.EnabledTrackTypes;
 import com.google.android.exoplayer2.source.sabr.parser.misc.Utils;
 import com.google.android.exoplayer2.source.sabr.parser.models.FormatSelector;

@@ -25,9 +25,9 @@ import com.google.android.exoplayer2.source.sabr.manifest.AdaptationSet;
 import com.google.android.exoplayer2.source.sabr.manifest.RangedUri;
 import com.google.android.exoplayer2.source.sabr.manifest.Representation;
 import com.google.android.exoplayer2.source.sabr.manifest.SabrManifest;
-import com.google.android.exoplayer2.source.sabr.parser.adapter.SabrFragmentedMp4Adapter2;
-import com.google.android.exoplayer2.source.sabr.parser.adapter.SabrMatroskaAdapter2;
-import com.google.android.exoplayer2.source.sabr.parser.core.SabrStream;
+import com.google.android.exoplayer2.source.sabr.parser.adapter.SabrFragmentedMp4Adapter;
+import com.google.android.exoplayer2.source.sabr.parser.adapter.SabrMatroskaAdapter;
+import com.google.android.exoplayer2.source.sabr.parser.SabrStream;
 import com.google.android.exoplayer2.source.sabr.parser.models.AudioSelector;
 import com.google.android.exoplayer2.source.sabr.parser.models.CaptionSelector;
 import com.google.android.exoplayer2.source.sabr.parser.models.FormatSelector;
@@ -317,13 +317,13 @@ public class DefaultSabrChunkSource implements SabrChunkSource {
             //    pendingIndexUri = selectedRepresentation.getIndexUri();
             //}
             //if (pendingInitializationUri != null || pendingIndexUri != null) {
-            //if (pendingInitializationUri != null) {
-            //    // We have initialization and/or index requests to make.
-            //    out.chunk = newInitializationChunk(representationHolder, dataSource,
-            //            trackSelection.getSelectedFormat(), trackSelection.getSelectionReason(),
-            //            trackSelection.getSelectionData(), pendingInitializationUri, pendingIndexUri);
-            //    return;
-            //}
+            if (pendingInitializationUri != null) {
+                // We have initialization and/or index requests to make.
+                out.chunk = newInitializationChunk(representationHolder, dataSource,
+                        trackSelection.getSelectedFormat(), trackSelection.getSelectionReason(),
+                        trackSelection.getSelectionData(), pendingInitializationUri, pendingIndexUri);
+                return;
+            }
         }
 
         long periodDurationUs = representationHolder.periodDurationUs;
@@ -577,7 +577,7 @@ public class DefaultSabrChunkSource implements SabrChunkSource {
                 //segmentUri.resolveUri(baseUrl),
                 DataSpec.HTTP_METHOD_POST,
                 //sabrStream.createVideoPlaybackAbrRequest(trackType, false).toByteArray(),
-                manifest.createVideoPlaybackAbrRequest(trackType, isInit).toByteArray(),
+                manifest.createVideoPlaybackAbrRequest(trackType, false).toByteArray(),
                 0, 0, C.LENGTH_UNSET,
                 //segmentUri.start,
                 //segmentUri.start,
@@ -964,14 +964,14 @@ public class DefaultSabrChunkSource implements SabrChunkSource {
             if (MimeTypes.APPLICATION_RAWCC.equals(containerMimeType)) {
                 extractor = new RawCcExtractor(representation.format);
             } else if (mimeTypeIsWebm(containerMimeType)) {
-                extractor = new SabrMatroskaAdapter2(SabrMatroskaAdapter2.FLAG_DISABLE_SEEK_FOR_CUES, sabrStream);
+                extractor = new SabrMatroskaAdapter(SabrMatroskaAdapter.FLAG_DISABLE_SEEK_FOR_CUES, sabrStream);
             } else {
                 int flags = 0;
                 if (enableEventMessageTrack) {
-                    flags |= SabrFragmentedMp4Adapter2.FLAG_ENABLE_EMSG_TRACK;
+                    flags |= SabrFragmentedMp4Adapter.FLAG_ENABLE_EMSG_TRACK;
                 }
                 extractor =
-                        new SabrFragmentedMp4Adapter2(
+                        new SabrFragmentedMp4Adapter(
                                 flags, null, null, null, closedCaptionFormats, playerEmsgTrackOutput, sabrStream);
             }
 
